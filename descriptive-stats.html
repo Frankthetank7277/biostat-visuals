@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Descriptive Statistics — Biomedical Imaging</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@400;700;800&display=swap');
+  :root {
+    --bg: #0a0e1a; --surface: #111827; --border: #1e293b;
+    --accent: #38bdf8; --accent2: #818cf8; --accent3: #34d399;
+    --text: #e2e8f0; --muted: #64748b; --warn: #f59e0b;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font-family:'Syne',sans-serif; min-height:100vh; padding:2rem; }
+  h1 { font-size:2rem; font-weight:800; color:var(--accent); margin-bottom:.25rem; }
+  .subtitle { color:var(--muted); font-family:'JetBrains Mono',monospace; font-size:.8rem; margin-bottom:2rem; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:1.5rem; max-width:1100px; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:1.5rem; }
+  .card h3 { font-size:1rem; font-weight:700; color:var(--accent2); margin-bottom:1rem; }
+  canvas { width:100% !important; }
+  .stat-row { display:flex; justify-content:space-between; align-items:center; padding:.5rem 0; border-bottom:1px solid var(--border); font-family:'JetBrains Mono',monospace; font-size:.85rem; }
+  .stat-row:last-child { border-bottom:none; }
+  .stat-val { color:var(--accent); font-weight:600; }
+  .controls { display:flex; gap:.75rem; flex-wrap:wrap; margin-bottom:1rem; }
+  button { background:var(--border); border:1px solid var(--accent); color:var(--accent); padding:.4rem .9rem; border-radius:6px; cursor:pointer; font-family:'JetBrains Mono',monospace; font-size:.75rem; transition:all .2s; }
+  button:hover, button.active { background:var(--accent); color:var(--bg); }
+  .full { grid-column:1/-1; }
+  label { font-family:'JetBrains Mono',monospace; font-size:.75rem; color:var(--muted); }
+  input[type=range] { accent-color:var(--accent); width:100%; margin-top:.25rem; }
+</style>
+</head>
+<body>
+<h1>📊 Descriptive Statistics</h1>
+<p class="subtitle">// intensity distributions · region properties · feature vectors</p>
+
+<div class="grid">
+  <div class="card full">
+    <h3>Pixel Intensity Histogram — Simulated Tissue Image</h3>
+    <div class="controls">
+      <button class="active" onclick="setDist('normal')">Normal Tissue</button>
+      <button onclick="setDist('bimodal')">Bimodal (UC)</button>
+      <button onclick="setDist('skewed')">Inflamed Region</button>
+      <button onclick="setDist('uniform')">Background</button>
+    </div>
+    <canvas id="histCanvas" height="200"></canvas>
+  </div>
+
+  <div class="card">
+    <h3>Summary Statistics</h3>
+    <div id="statsTable"></div>
+  </div>
+
+  <div class="card">
+    <h3>Box Plot — Region Intensities</h3>
+    <canvas id="boxCanvas" height="220"></canvas>
+  </div>
+
+  <div class="card full">
+    <h3>Moment Explorer</h3>
+    <label>Distribution Skewness: <span id="skewVal">0</span></label>
+    <input type="range" id="skewSlider" min="-2" max="2" step="0.1" value="0" oninput="updateMoments()">
+    <canvas id="momentCanvas" height="160" style="margin-top:1rem;"></canvas>
+  </div>
+</div>
+
+<script>
+const C = (id) => document.getElementById(id);
+let currentDist = 'normal';
+let currentData = [];
+
+function randn() {
+  let u=0,v=0;
+  while(u===0) u=Math.random();
+  while(v===0) v=Math.random();
+  return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+}
+
+function generateData(type, n=2000) {
+  let d=[];
+  if(type==='normal') { for(let i=0;i<n;i++) d.push(Math.max(0,Math.min(255,128+randn()*40))); }
+  else if(type==='bimodal') { for(let i=0;i<n;i++) { if(Math.random()<0.5) d.push(Math.max(0,Math.min(255,80+randn()*20))); else d.push(Math.max(0,Math.min(255,180+randn()*25))); } }
+  else if(type==='skewed') { for(let i=0;i<n;i++) { let v=Math.abs(randn()*0.5)*120+20; d.push(Math.min(255,v)); } }
+  else { for(let i=0;i<n;i++) d.push(Math.random()*255); }
+  return d;
+}
+
+function computeStats(data) {
+  const n=data.length, mean=data.reduce((a,b)=>a+b,0)/n;
+  const sorted=[...data].sort((a,b)=>a-b);
+  const variance=data.reduce((a,b)=>a+(b-mean)**2,0)/n;
+  const std=Math.sqrt(variance);
+  const skew=data.reduce((a,b)=>a+((b-mean)/std)**3,0)/n;
+  const kurt=data.reduce((a,b)=>a+((b-mean)/std)**4,0)/n-3;
+  const median=sorted[Math.floor(n/2)];
+  const q1=sorted[Math.floor(n/4)], q3=sorted[Math.floor(3*n/4)];
+  return {mean:mean.toFixed(2),std:std.toFixed(2),median:median.toFixed(2),variance:variance.toFixed(2),skew:skew.toFixed(3),kurt:kurt.toFixed(3),q1:q1.toFixed(1),q3:q3.toFixed(1),min:sorted[0].toFixed(1),max:sorted[n-1].toFixed(1)};
+}
+
+function drawHist(data) {
+  const cv=C('histCanvas'), ctx=cv.getContext('2d');
+  cv.width=cv.offsetWidth*window.devicePixelRatio||800; cv.height=200;
+  ctx.scale(window.devicePixelRatio||1,1);
+  const W=cv.offsetWidth||800, H=200, bins=64;
+  const counts=new Array(bins).fill(0);
+  data.forEach(v=>counts[Math.min(bins-1,Math.floor(v/256*bins))]++);
+  const maxC=Math.max(...counts);
+  ctx.fillStyle='#0a0e1a'; ctx.fillRect(0,0,W,H);
+  const bw=W/bins;
+  counts.forEach((c,i)=>{
+    const h=(c/maxC)*(H-30);
+    const t=i/bins;
+    ctx.fillStyle=`hsl(${200+t*60},80%,55%)`;
+    ctx.fillRect(i*bw,H-30-h,bw-1,h);
+  });
+  // x axis
+  ctx.fillStyle='#64748b'; ctx.font='10px JetBrains Mono';
+  [0,64,128,192,255].forEach(v=>{ ctx.fillText(v,(v/255*(W-20)).toFixed(0),H-10); });
+}
+
+function drawStats(stats) {
+  const t=C('statsTable');
+  const rows=[['Mean',stats.mean],['Std Dev',stats.std],['Median',stats.median],['Variance',stats.variance],['Skewness',stats.skew],['Excess Kurtosis',stats.kurt],['Q1 / Q3',`${stats.q1} / ${stats.q3}`],['Min / Max',`${stats.min} / ${stats.max}`]];
+  t.innerHTML=rows.map(([k,v])=>`<div class="stat-row"><span>${k}</span><span class="stat-val">${v}</span></div>`).join('');
+}
+
+function drawBox(data) {
+  const cv=C('boxCanvas'), ctx=cv.getContext('2d');
+  cv.width=cv.offsetWidth*window.devicePixelRatio||400; cv.height=220;
+  ctx.scale(window.devicePixelRatio||1,1);
+  const W=cv.offsetWidth||400, H=220;
+  ctx.fillStyle='#0a0e1a'; ctx.fillRect(0,0,W,H);
+  const regions=['Nucleus','Cytoplasm','Background'];
+  const colors=['#38bdf8','#818cf8','#34d399'];
+  regions.forEach((r,i)=>{
+    const offset=(i-1)*40;
+    const d=data.map(v=>Math.max(0,Math.min(255,v+offset+randn()*15)));
+    const sorted=[...d].sort((a,b)=>a-b), n=sorted.length;
+    const q1=sorted[Math.floor(n/4)], q3=sorted[Math.floor(3*n/4)];
+    const med=sorted[Math.floor(n/2)], mn=sorted[0], mx=sorted[n-1];
+    const scale=v=>(v/255)*(W-80)+40;
+    const y=50+i*60;
+    ctx.strokeStyle=colors[i]; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(scale(mn),y); ctx.lineTo(scale(q1),y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(scale(q3),y); ctx.lineTo(scale(mx),y); ctx.stroke();
+    ctx.strokeRect(scale(q1),y-12,scale(q3)-scale(q1),24);
+    ctx.beginPath(); ctx.moveTo(scale(med),y-12); ctx.lineTo(scale(med),y+12); ctx.stroke();
+    ctx.fillStyle=colors[i]; ctx.font='11px Syne'; ctx.fillText(r,scale(mn),y-18);
+  });
+}
+
+function setDist(type) {
+  currentDist=type;
+  document.querySelectorAll('button').forEach(b=>b.classList.remove('active'));
+  event.target.classList.add('active');
+  currentData=generateData(type);
+  drawHist(currentData); drawStats(computeStats(currentData)); drawBox(currentData);
+}
+
+function updateMoments() {
+  const s=parseFloat(C('skewSlider').value);
+  C('skewVal').textContent=s.toFixed(1);
+  const cv=C('momentCanvas'), ctx=cv.getContext('2d');
+  cv.width=cv.offsetWidth*window.devicePixelRatio||800; cv.height=160;
+  ctx.scale(window.devicePixelRatio||1,1);
+  const W=cv.offsetWidth||800, H=160;
+  ctx.fillStyle='#0a0e1a'; ctx.fillRect(0,0,W,H);
+  ctx.beginPath(); ctx.strokeStyle='#38bdf8'; ctx.lineWidth=2;
+  for(let x=0;x<=W;x++) {
+    const t=(x/W)*6-3;
+    const base=Math.exp(-t*t/2)/Math.sqrt(2*Math.PI);
+    const sk=1+s*t*0.3;
+    const y=H-20-(base*sk*Math.max(0.1,(1/(1+Math.abs(s)*0.2))))*(H-40);
+    x===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+  ctx.fillStyle='#64748b'; ctx.font='11px JetBrains Mono';
+  ctx.fillText('μ-3σ',10,H-5); ctx.fillText('μ',W/2-8,H-5); ctx.fillText('μ+3σ',W-50,H-5);
+}
+
+currentData=generateData('normal');
+drawHist(currentData); drawStats(computeStats(currentData)); drawBox(currentData); updateMoments();
+window.addEventListener('resize',()=>{ drawHist(currentData); drawBox(currentData); updateMoments(); });
+</script>
+</body></html>

@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Regression & Survival Analysis — Biomedical Imaging</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@400;700;800&display=swap');
+  :root{--bg:#0a0e1a;--surface:#111827;--border:#1e293b;--accent:#fb923c;--accent2:#38bdf8;--accent3:#a78bfa;--text:#e2e8f0;--muted:#64748b;}
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;min-height:100vh;padding:2rem;}
+  h1{font-size:2rem;font-weight:800;color:var(--accent);margin-bottom:.25rem;}
+  .subtitle{color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:.8rem;margin-bottom:2rem;}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;max-width:1100px;}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1.5rem;}
+  .card h3{font-size:1rem;font-weight:700;color:var(--accent2);margin-bottom:1rem;}
+  canvas{display:block;width:100%!important;}
+  .full{grid-column:1/-1;}
+  label{font-family:'JetBrains Mono',monospace;font-size:.75rem;color:var(--muted);display:block;margin-bottom:.25rem;}
+  input[type=range]{accent-color:var(--accent);width:100%;margin-bottom:.75rem;}
+  .info-box{background:#0d1425;border:1px solid var(--border);border-radius:8px;padding:.75rem;margin-top:.75rem;font-family:'JetBrains Mono',monospace;font-size:.78rem;line-height:1.7;color:var(--muted);}
+  .info-box span{color:var(--accent);}
+  .eq{font-family:'JetBrains Mono',monospace;font-size:.85rem;color:var(--accent3);background:#12102a;border:1px solid var(--accent3)33;border-radius:6px;padding:.5rem .75rem;margin:.5rem 0;}
+</style>
+</head>
+<body>
+<h1>📈 Regression & Survival Analysis</h1>
+<p class="subtitle">// logistic regression · Cox PH · ROC · imaging biomarkers → outcomes</p>
+
+<div class="grid">
+  <div class="card">
+    <h3>Logistic Regression — Tissue Classification</h3>
+    <label>Decision boundary shift: <span id="biasVal">0.0</span></label>
+    <input type="range" id="biasSlider" min="-2" max="2" step="0.1" value="0" oninput="drawLogistic()">
+    <canvas id="logisticCanvas" height="260"></canvas>
+    <div class="eq">P(y=1|x) = σ(β₀ + β₁·x)</div>
+  </div>
+
+  <div class="card">
+    <h3>ROC Curve — Biomarker Performance</h3>
+    <canvas id="rocCanvas" height="280"></canvas>
+    <div class="info-box"><span>AUC:</span> area under the ROC curve &nbsp;|&nbsp; Random classifier = 0.5 diagonal</div>
+  </div>
+
+  <div class="card full">
+    <h3>Kaplan-Meier Survival Curves — Cox PH</h3>
+    <canvas id="kmCanvas" height="220"></canvas>
+    <div style="display:flex;gap:2rem;margin-top:.75rem;font-family:'JetBrains Mono',monospace;font-size:.78rem;">
+      <span style="color:#fb923c">■ High CD4+ infiltration</span>
+      <span style="color:#38bdf8">■ Low CD4+ infiltration</span>
+      <span style="color:#64748b">Log-rank p &lt; 0.05 → HR = 0.48 (95% CI: 0.31–0.74)</span>
+    </div>
+  </div>
+</div>
+
+<script>
+function randn(){let u=0,v=0;while(u===0)u=Math.random();while(v===0)v=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+function sigmoid(x){return 1/(1+Math.exp(-x));}
+function normalCDF(x){const a1=0.254829592,a2=-0.284496736,a3=1.421413741,a4=-1.453152027,a5=1.061405429,p=0.3275911;const sign=x<0?-1:1;x=Math.abs(x)/Math.sqrt(2);const t=1/(1+p*x);const y=1-(((((a5*t+a4)*t)+a3)*t+a2)*t+a1)*t*Math.exp(-x*x);return 0.5*(1+sign*y);}
+
+function drawLogistic(){
+  const bias=parseFloat(document.getElementById('biasSlider').value);
+  document.getElementById('biasVal').textContent=bias.toFixed(1);
+  const cv=document.getElementById('logisticCanvas');
+  cv.width=cv.offsetWidth||400; cv.height=260;
+  const ctx=cv.getContext('2d');
+  const W=cv.width, H=260, pad=40;
+  ctx.fillStyle='#0a0e1a'; ctx.fillRect(0,0,W,H);
+
+  // scatter: class 0 around x=-1, class 1 around x=1
+  const pts0=Array.from({length:40},()=>({x:-1+randn()*0.8,y:0}));
+  const pts1=Array.from({length:40},()=>({x:1+randn()*0.8,y:1}));
+  const allPts=[...pts0,...pts1];
+  const sx=v=>(v+3)/6*(W-2*pad)+pad;
+  const sy=v=>H-pad-v*(H-2*pad)*0.7-pad/2;
+
+  allPts.forEach(p=>{
+    ctx.beginPath(); ctx.arc(sx(p.x),sy(p.y)+randn()*8,3.5,0,Math.PI*2);
+    ctx.fillStyle=(p.y===0?'#38bdf8':'#fb923c')+'99'; ctx.fill();
+  });
+
+  // sigmoid curve
+  ctx.beginPath(); ctx.strokeStyle='#a78bfa'; ctx.lineWidth=2.5;
+  for(let xi=0;xi<=W;xi++){
+    const xv=(xi/W)*6-3;
+    const prob=sigmoid(2*(xv-bias));
+    const yn=H-pad-prob*(H-2*pad)*0.7-pad/2;
+    xi===0?ctx.moveTo(xi,yn):ctx.lineTo(xi,yn);
+  }
+  ctx.stroke();
+
+  // decision boundary
+  const dbx=sx(bias);
+  ctx.setLineDash([4,4]); ctx.strokeStyle='#f59e0b'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(dbx,pad); ctx.lineTo(dbx,H-pad); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle='#f59e0b'; ctx.font='10px JetBrains Mono'; ctx.fillText('boundary',dbx+4,pad+10);
+
+  // labels
+  ctx.fillStyle='#38bdf8'; ctx.font='10px JetBrains Mono'; ctx.fillText('Class 0 (benign)',pad,H-5);
+  ctx.fillStyle='#fb923c'; ctx.fillText('Class 1 (inflamed)',W/2,H-5);
+  ctx.fillStyle='#64748b'; ctx.fillText('-3',pad-8,H-pad+12); ctx.fillText('0',W/2-4,H-pad+12); ctx.fillText('+3',W-pad-8,H-pad+12);
+}
+
+function drawROC(){
+  const cv=document.getElementById('rocCanvas');
+  cv.width=cv.offsetWidth||400; cv.height=280;
+  const ctx=cv.getContext('2d');
+  const W=cv.width, H=280, pad=40;
+  ctx.fillStyle='#0a0e1a'; ctx.fillRect(0,0,W,H);
+
+  // Random line
+  ctx.setLineDash([4,4]); ctx.strokeStyle='#64748b'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(pad,H-pad); ctx.lineTo(W-pad,pad); ctx.stroke(); ctx.setLineDash([]);
+
+  const curves=[
+    {auc:0.91,col:'#fb923c',label:'CD4+ density'},
+    {auc:0.78,col:'#38bdf8',label:'Cell area'},
+    {auc:0.65,col:'#a78bfa',label:'Texture score'}
+  ];
+
+  curves.forEach(({auc,col,label})=>{
+    // Generate ROC-like curve parameterized by auc
+    ctx.beginPath(); ctx.strokeStyle=col; ctx.lineWidth=2;
+    const pts=[[0,0]];
+    for(let t=0;t<=1;t+=0.02){
+      const fpr=t;
+      const tpr=Math.pow(t,1/(3*auc-1.5+0.5));
+      pts.push([fpr,tpr]);
+    }
+    pts.push([1,1]);
+    pts.forEach(([fpr,tpr],i)=>{
+      const x=pad+fpr*(W-2*pad), y=H-pad-tpr*(H-2*pad);
+      i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+    });
+    ctx.stroke();
+  });
+
+  curves.forEach(({auc,col,label},i)=>{
+    ctx.fillStyle=col; ctx.font='11px JetBrains Mono';
+    ctx.fillText(`${label}: AUC=${auc}`,pad,pad+15+i*16);
+  });
+
+  ctx.fillStyle='#64748b'; ctx.font='10px JetBrains Mono';
+  ctx.fillText('FPR (1-Specificity)',W/2-50,H-5);
+  ctx.save(); ctx.translate(12,H/2); ctx.rotate(-Math.PI/2); ctx.fillText('TPR (Sensitivity)',0,0); ctx.restore();
+}
+
+function drawKM(){
+  const cv=document.getElementById('kmCanvas');
+  cv.width=cv.offsetWidth||800; cv.height=220;
+  const ctx=cv.getContext('2d');
+  const W=cv.width, H=220, pad=45;
+  ctx.fillStyle='#0a0e1a'; ctx.fillRect(0,0,W,H);
+
+  // Generate step functions
+  function kmCurve(lambda, n, seed){
+    let S=1, t=0, steps=[[0,1]];
+    let rng=seed;
+    for(let i=0;i<n;i++){
+      rng=(rng*1664525+1013904223)>>>0;
+      const dt=-(1/lambda)*Math.log((rng/4294967296));
+      t+=dt; S*=(1-1/(n-i));
+      if(t>60) break;
+      steps.push([t,S]);
+    }
+    steps.push([60,S]);
+    return steps;
+  }
+
+  const highGroup=kmCurve(0.03,50,42);
+  const lowGroup=kmCurve(0.07,50,99);
+
+  const maxT=60;
+  const sx=t=>(t/maxT)*(W-2*pad)+pad;
+  const sy=s=>H-pad-s*(H-2*pad);
+
+  // shaded CI bands (simplified)
+  [highGroup,lowGroup].forEach((steps,gi)=>{
+    ctx.beginPath(); ctx.fillStyle=gi===0?'#fb923c18':'#38bdf818';
+    steps.forEach(([t,s],i)=>{
+      const x=sx(t), y=sy(s);
+      if(i===0) ctx.moveTo(x,sy(s+0.06));
+      else { ctx.lineTo(x,sy(s+0.06)); }
+    });
+    [...steps].reverse().forEach(([t,s])=>ctx.lineTo(sx(t),sy(s-0.06)));
+    ctx.closePath(); ctx.fill();
+  });
+
+  [highGroup,lowGroup].forEach((steps,gi)=>{
+    ctx.beginPath(); ctx.strokeStyle=gi===0?'#fb923c':'#38bdf8'; ctx.lineWidth=2.5;
+    steps.forEach(([t,s],i)=>{
+      if(i===0){ctx.moveTo(sx(t),sy(s));return;}
+      ctx.lineTo(sx(t),sy(steps[i-1][1]));
+      ctx.lineTo(sx(t),sy(s));
+    });
+    ctx.stroke();
+  });
+
+  // grid + axes
+  ctx.strokeStyle='#1e293b'; ctx.lineWidth=1;
+  [0,.25,.5,.75,1].forEach(t=>{ ctx.beginPath(); ctx.moveTo(pad,sy(t)); ctx.lineTo(W-pad,sy(t)); ctx.stroke(); ctx.fillStyle='#64748b'; ctx.font='9px JetBrains Mono'; ctx.fillText((t*100).toFixed(0)+'%',4,sy(t)+3); });
+  [0,12,24,36,48,60].forEach(t=>{ ctx.fillStyle='#64748b'; ctx.font='9px JetBrains Mono'; ctx.fillText(t,sx(t)-5,H-5); });
+  ctx.fillStyle='#94a3b8'; ctx.font='10px JetBrains Mono'; ctx.fillText('Time (months)',W/2-40,H-2);
+  ctx.save(); ctx.translate(12,H/2); ctx.rotate(-Math.PI/2); ctx.fillText('Survival probability',0,0); ctx.restore();
+}
+
+drawLogistic(); drawROC(); drawKM();
+window.addEventListener('resize',()=>{drawLogistic();drawROC();drawKM();});
+</script>
+</body></html>

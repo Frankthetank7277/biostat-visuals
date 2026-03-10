@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Biomedical Statistics — Interactive Visualizations</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@400;600;700;800&display=swap');
+
+  :root {
+    --bg: #0a0e1a;
+    --surface: #111827;
+    --surface2: #141e2e;
+    --border: #1e293b;
+    --accent: #38bdf8;
+    --text: #e2e8f0;
+    --muted: #64748b;
+    --glow: rgba(56,189,248,0.15);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Syne', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(56,189,248,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(56,189,248,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container { max-width: 1140px; margin: 0 auto; padding: 3rem 2rem; position: relative; z-index: 1; }
+
+  /* Header */
+  .header { margin-bottom: 3rem; }
+  .eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .75rem;
+    color: var(--accent);
+    letter-spacing: .15em;
+    text-transform: uppercase;
+    margin-bottom: .5rem;
+  }
+  h1 {
+    font-size: clamp(2rem, 5vw, 3.5rem);
+    font-weight: 800;
+    line-height: 1.1;
+    color: var(--text);
+    margin-bottom: .75rem;
+  }
+  h1 span { color: var(--accent); }
+  .desc {
+    color: var(--muted);
+    font-size: 1rem;
+    max-width: 600px;
+    line-height: 1.6;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .85rem;
+  }
+
+  /* Stats bar */
+  .stats-bar {
+    display: flex;
+    gap: 2rem;
+    flex-wrap: wrap;
+    margin: 1.5rem 0 2.5rem;
+    padding: 1rem 1.5rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+  .stat-item { text-align: center; }
+  .stat-item .val { font-family: 'JetBrains Mono', monospace; font-size: 1.4rem; font-weight: 700; color: var(--accent); }
+  .stat-item .lbl { font-size: .7rem; color: var(--muted); font-family: 'JetBrains Mono', monospace; margin-top: .1rem; }
+
+  /* Cards grid */
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 1.25rem;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 1.75rem;
+    text-decoration: none;
+    color: inherit;
+    display: block;
+    position: relative;
+    overflow: hidden;
+    transition: border-color .25s, transform .25s, box-shadow .25s;
+  }
+  .card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--card-accent, var(--accent));
+    opacity: 0;
+    transition: opacity .25s;
+  }
+  .card:hover {
+    border-color: var(--card-accent, var(--accent));
+    transform: translateY(-3px);
+    box-shadow: 0 8px 32px rgba(0,0,0,.4), 0 0 0 1px var(--card-accent, var(--accent))22;
+  }
+  .card:hover::before { opacity: 1; }
+
+  .card-icon {
+    font-size: 2rem;
+    margin-bottom: 1rem;
+    display: block;
+    line-height: 1;
+  }
+  .card-title {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: .4rem;
+  }
+  .card-sub {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .7rem;
+    color: var(--card-accent, var(--accent));
+    margin-bottom: .75rem;
+    letter-spacing: .05em;
+  }
+  .card-desc {
+    font-size: .85rem;
+    color: var(--muted);
+    line-height: 1.6;
+    margin-bottom: 1rem;
+  }
+  .card-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .35rem;
+  }
+  .tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .65rem;
+    padding: .2rem .5rem;
+    border-radius: 4px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .card-arrow {
+    position: absolute;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    font-size: 1.1rem;
+    color: var(--card-accent, var(--accent));
+    opacity: 0;
+    transition: opacity .2s, transform .2s;
+  }
+  .card:hover .card-arrow { opacity: 1; transform: translate(2px,-2px); }
+
+  /* Section divider */
+  .section-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .7rem;
+    color: var(--muted);
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    margin: 2.5rem 0 1rem;
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+  }
+  .section-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* Footer */
+  .footer {
+    margin-top: 4rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .75rem;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: .5rem;
+  }
+  .footer span { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <div class="eyebrow">// Frank Lato · UIUC Biomedical Image Computing</div>
+    <h1>Biomedical <span>Statistics</span><br>Visualizations</h1>
+    <p class="desc">Interactive reference for statistical methods in biomedical image processing — from descriptive summaries to survival analysis and segmentation metrics.</p>
+  </div>
+
+  <div class="stats-bar">
+    <div class="stat-item"><div class="val">8</div><div class="lbl">Modules</div></div>
+    <div class="stat-item"><div class="val">30+</div><div class="lbl">Interactive demos</div></div>
+    <div class="stat-item"><div class="val">BIOE 486</div><div class="lbl">Applied Deep Learning</div></div>
+    <div class="stat-item"><div class="val">BIOE 484</div><div class="lbl">Statistical Biomedical Imaging</div></div>
+    <div class="stat-item"><div class="val">Cellpose</div><div class="lbl">UC Research</div></div>
+  </div>
+
+  <div class="section-label">Core Statistical Frameworks</div>
+
+  <div class="cards">
+
+    <a href="descriptive-stats.html" class="card" style="--card-accent:#38bdf8;">
+      <span class="card-icon">📊</span>
+      <div class="card-title">Descriptive Statistics</div>
+      <div class="card-sub">intensity distributions · moments · box plots</div>
+      <div class="card-desc">Summarize pixel intensity distributions, region properties, and feature vectors. Explore mean, variance, skewness, kurtosis across simulated tissue types.</div>
+      <div class="card-tags">
+        <span class="tag">histogram</span>
+        <span class="tag">moments</span>
+        <span class="tag">box plot</span>
+        <span class="tag">IQR</span>
+      </div>
+      <div class="card-arrow">→</div>
+    </a>
+
+    <a href="spatial-statistics.html" class="card" style="--card-accent:#34d399;">
+      <span class="card-icon">🗺️</span>
+      <div class="card-title">Spatial Statistics</div>
+      <div class="card-sub">MRF · semivariogram · Moran's I</div>
+      <div class="card-desc">Spatial autocorrelation in tissue images. Markov Random Fields, semivariograms showing nugget/sill/range, and Moran's I spatial index.</div>
+      <div class="card-tags">
+        <span class="tag">MRF</span>
+        <span class="tag">variogram</span>
+        <span class="tag">Moran's I</span>
+        <span class="tag">spatial corr</span>
+      </div>
+      <div class="card-arrow">→</div>
+    </a>
+
+    <a href="hypothesis-testing.html" class="card" style="--card-accent:#f472b6;">
+      <span class="card-icon">🧪</span>
+      <div class="card-title">Hypothesis Testing</div>
+      <div class="card-sub">t-test · ANOVA · FDR · power analysis</div>
+      <div class="card-desc">Compare cell populations across conditions. Two-sample t-tests, multiple comparison correction (Bonferroni, BH-FDR), and power curves.</div>
+      <div class="card-tags">
+        <span class="tag">t-test</span>
+        <span class="tag">Bonferroni</span>
+        <span class="tag">FDR</span>
+        <span class="tag">power</span>
+      </div>
+      <div class="card-arrow">→</div>
+    </a>
+
+    <a href="multivariate-analysis.html" class="card" style="--card-accent:#818cf8;">
+      <span class="card-icon">🔭</span>
+      <div class="card-title">Multivariate Analysis</div>
+      <div class="card-sub">PCA · t-SNE · UMAP · correlation heatmap</div>
+      <div class="card-desc">Reduce high-dimensional cell feature spaces. Compare PCA, t-SNE, and UMAP projections for 4-class tissue cell clustering with scree plots and correlation matrices.</div>
+      <div class="card-tags">
+        <span class="tag">PCA</span>
+        <span class="tag">t-SNE</span>
+        <span class="tag">UMAP</span>
+        <span class="tag">scree plot</span>
+      </div>
+      <div class="card-arrow">→</div>
+    </a>
+
+    <a href="regression-survival.html" class="card" style="--card-accent:#fb923c;">
+      <span class="card-icon">📈</span>
+      <div class="card-title">Regression & Survival</div>
+      <div class="card-sub">logistic regression · Cox PH · Kaplan-Meier · ROC</div>
+      <div class="card-desc">Connect imaging biomarkers to clinical outcomes. Logistic decision boundaries, ROC/AUC comparisons, and Kaplan-Meier survival curves stratified by CD4+ density.</div>
+      <div class="card-tags">
+        <span class="tag">logistic reg</span>
+        <span class="tag">Cox PH</span>
+        <span class="tag">KM curve</span>
+        <span class="tag">AUC</span>
+      </div>
+      <div class="card-arrow">→</div>
+    </a>
+
+    <a href="bayesian-statistics.html" class="card" style="--card-accent:#e879f9;">
+      <span class="card-icon">🎲</span>
+      <div class="card-title">Bayesian Statistics</div>
+      <div class="card-sub">prior · likelihood · posterior · MAP · conjugate priors</div>
+      <div class="card-desc">Prior/posterior reasoning for segmentation. Gaussian conjugate updates, MAP estimation, probabilistic segmentation maps, and Beta-Binomial conjugate updating.</div>
+      <div class="card-tags">
+        <span class="tag">Bayes</span>
+        <span class="tag">MAP</span>
+        <span class="tag">Beta-Binomial</span>
+        <span class="tag">posterior</span>
+      </div>
+      <div class="card-arrow">→</div>
+    </a>
+
+    <a href="mixture-models.html" class="card" style="--card-accent:#f59e0b;">
+      <span class="card-icon">🧩</span>
+      <div class="card-title">Distribution Fitting & GMMs</div>
+      <div class="card-sub">GMM · EM algorithm · BIC/AIC · model selection</div>
+      <div class="card-desc">Fit Gaussian Mixture Models to cell intensity distributions. Watch EM algorithm converge, compare K components with BIC/AIC, and identify cell populations unsupervised.</div>
+      <div class="card-tags">
+        <span class="tag">GMM</span>
+        <span class="tag">EM algorithm</span>
+        <span class="tag">BIC</span>
+        <span class="tag">AIC</span>
+      </div>
+      <div class="card-arrow">→</div>
+    </a>
+
+    <a href="performance-metrics.html" class="card" style="--card-accent:#34d399;">
+      <span class="card-icon">📐</span>
+      <div class="card-title">Performance Metrics</div>
+      <div class="card-sub">Dice · IoU · sensitivity · specificity · Cohen's κ</div>
+      <div class="card-desc">Evaluate segmentation algorithms like Cellpose. Interactive confusion matrix, Dice/IoU overlap visualization, threshold sweeping, and the Dice↔IoU geometric relationship.</div>
+      <div class="card-tags">
+        <span class="tag">Dice</span>
+        <span class="tag">IoU</span>
+        <span class="tag">Cohen's κ</span>
+        <span class="tag">confusion matrix</span>
+      </div>
+      <div class="card-arrow">→</div>
+    </a>
+
+  </div>
+
+  <div class="footer">
+    <div>Built by <span>Frank Lato</span> · UIUC Biomedical Image Computing</div>
+    <div><span>BIOE 486</span> Applied Deep Learning &nbsp;·&nbsp; <span>BIOE 484</span> Statistical Biomedical Imaging</div>
+  </div>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Performance Metrics — Biomedical Imaging</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@400;700;800&display=swap');
+  :root{--bg:#0a0e1a;--surface:#111827;--border:#1e293b;--accent:#34d399;--accent2:#f59e0b;--accent3:#f472b6;--text:#e2e8f0;--muted:#64748b;}
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;min-height:100vh;padding:2rem;}
+  h1{font-size:2rem;font-weight:800;color:var(--accent);margin-bottom:.25rem;}
+  .subtitle{color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:.8rem;margin-bottom:2rem;}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;max-width:1100px;}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1.5rem;}
+  .card h3{font-size:1rem;font-weight:700;color:var(--accent2);margin-bottom:1rem;}
+  canvas{display:block;width:100%!important;}
+  .full{grid-column:1/-1;}
+  label{font-family:'JetBrains Mono',monospace;font-size:.75rem;color:var(--muted);display:block;margin-bottom:.25rem;}
+  input[type=range]{accent-color:var(--accent);width:100%;margin-bottom:.5rem;}
+  .metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:.75rem;margin-bottom:1rem;}
+  .metric-card{background:#0d1425;border:1px solid var(--border);border-radius:8px;padding:.75rem;text-align:center;}
+  .metric-card .mval{font-family:'JetBrains Mono',monospace;font-size:1.3rem;font-weight:700;}
+  .metric-card .mlabel{font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--muted);margin-top:.2rem;}
+  .info-box{background:#0d1425;border:1px solid var(--border);border-radius:8px;padding:.75rem;margin-top:.75rem;font-family:'JetBrains Mono',monospace;font-size:.78rem;line-height:1.7;color:var(--muted);}
+  .info-box span{color:var(--accent);}
+  button{background:var(--border);border:1px solid var(--accent);color:var(--accent);padding:.4rem .9rem;border-radius:6px;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:.75rem;transition:all .2s;margin:.2rem;}
+  button:hover,button.active{background:var(--accent);color:var(--bg);}
+  .controls{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.75rem;}
+</style>
+</head>
+<body>
+<h1>📐 Performance Metrics</h1>
+<p class="subtitle">// Dice · IoU · sensitivity · specificity · ROC/AUC · Cohen's κ — segmentation report card</p>
+
+<div class="grid">
+  <div class="card full">
+    <h3>Segmentation Overlap — Cellpose Output vs Ground Truth</h3>
+    <label>Predicted mask overlap (threshold): <span id="threshV">0.50</span></label>
+    <input type="range" id="threshSlider" min="0" max="1" step="0.01" value="0.5" oninput="update()">
+    <div class="metric-grid" id="metricGrid"></div>
+    <canvas id="overlapCanvas" height="180"></canvas>
+  </div>
+
+  <div class="card">
+    <h3>Confusion Matrix</h3>
+    <div class="controls">
+      <button class="active" onclick="setScenario('good')">Good model</button>
+      <button onclick="setScenario('fp')">High FP</button>
+      <button onclick="setScenario('fn')">High FN</button>
+    </div>
+    <canvas id="confCanvas" height="240"></canvas>
+  </div>
+
+  <div class="card">
+    <h3>Dice vs IoU Relationship</h3>
+    <canvas id="diceIouCanvas" height="240"></canvas>
+    <div class="info-box">
+      <span>Dice = 2·IoU / (1 + IoU)</span><br>
+      They are monotonically related but Dice weights overlap more heavily.
+    </div>
+  </div>
+</div>
+
+<script>
+function update(){
+  const thresh=parseFloat(document.getElementById('threshSlider').value);
+  document.getElementById('threshV').textContent=thresh.toFixed(2);
+
+  // Simulated pixel-level stats as function of threshold
+  const totalPos=1000, totalNeg=3000;
+  const TP=Math.round(totalPos*(1-thresh*0.8));
+  const FN=totalPos-TP;
+  const FP=Math.round(totalNeg*(1-thresh)*0.3);
+  const TN=totalNeg-FP;
+
+  const dice=(2*TP)/(2*TP+FP+FN)||0;
+  const iou=TP/(TP+FP+FN)||0;
+  const sens=TP/totalPos;
+  const spec=TN/totalNeg;
+  const kappa=computeKappa(TP,FP,FN,TN);
+
+  document.getElementById('metricGrid').innerHTML=
+    `<div class="metric-card"><div class="mval" style="color:#34d399">${dice.toFixed(3)}</div><div class="mlabel">Dice</div></div>
+     <div class="metric-card"><div class="mval" style="color:#38bdf8">${iou.toFixed(3)}</div><div class="mlabel">IoU (Jaccard)</div></div>
+     <div class="metric-card"><div class="mval" style="color:#f59e0b">${sens.toFixed(3)}</div><div class="mlabel">Sensitivity</div></div>
+     <div class="metric-card"><div class="mval" style="color:#f472b6">${spec.toFixed(3)}</div><div class="mlabel">Specificity</div></div>`;
+
+  drawOverlap(TP,FP,FN,TN,thresh);
+}
+
+function computeKappa(TP,FP,FN,TN){
+  const N=TP+FP+FN+TN;
+  const po=(TP+TN)/N;
+  const pe=((TP+FP)*(TP+FN)+(FP+TN)*(FN+TN))/(N*N);
+  return (po-pe)/(1-pe)||0;
+}
+
+function drawOverlap(TP,FP,FN,TN,thresh){
+  const cv=document.getElementById('overlapCanvas');
+  cv.width=cv.offsetWidth||800; cv.height=180;
+  const ctx=cv.getContext('2d');
+  const W=cv.width, H=180;
+  ctx.fillStyle='#0a0e1a'; ctx.fillRect(0,0,W,H);
+
+  // Visual Venn-like diagram
+  const total=TP+FP+FN+TN;
+  const cx=W/2, cy=H/2, r=Math.min(H/2-20,W/4-10);
+  const offset=r*(1-thresh*0.8)*0.5;
+
+  // GT circle
+  ctx.beginPath(); ctx.arc(cx-offset,cy,r,0,Math.PI*2);
+  ctx.fillStyle='#34d39922'; ctx.fill();
+  ctx.strokeStyle='#34d399'; ctx.lineWidth=2; ctx.stroke();
+
+  // Pred circle
+  ctx.beginPath(); ctx.arc(cx+offset,cy,r,0,Math.PI*2);
+  ctx.fillStyle='#38bdf822'; ctx.fill();
+  ctx.strokeStyle='#38bdf8'; ctx.lineWidth=2; ctx.stroke();
+
+  // Labels
+  ctx.fillStyle='#34d399'; ctx.font='11px JetBrains Mono';
+  ctx.fillText('GT',cx-offset-r/2,cy); ctx.fillText('Pred',cx+offset+r/4,cy);
+  ctx.fillStyle='#ffffff88'; ctx.font='10px JetBrains Mono';
+  ctx.fillText(`TP=${TP}`,cx-10,cy-5);
+  ctx.fillStyle='#34d399aa'; ctx.fillText(`FN=${FN}`,cx-offset-r+5,cy);
+  ctx.fillStyle='#38bdf8aa'; ctx.fillText(`FP=${FP}`,cx+offset+r-40,cy);
+}
+
+let scenario='good';
+function setScenario(s){
+  scenario=s;
+  document.querySelectorAll('.controls button').forEach(b=>b.classList.remove('active'));
+  event.target.classList.add('active');
+  drawConfusion();
+}
+
+function drawConfusion(){
+  const mats={
+    good:[[850,50],[80,920]],
+    fp:[[620,280],[60,940]],
+    fn:[[500,100],[400,900]]
+  };
+  const mat=mats[scenario];
+  const cv=document.getElementById('confCanvas');
+  cv.width=cv.offsetWidth||400; cv.height=240;
+  const ctx=cv.getContext('2d');
+  const W=cv.width, H=240;
+  ctx.fillStyle='#0a0e1a'; ctx.fillRect(0,0,W,H);
+
+  const labels=['Cell','Background'];
+  const total=mat.flat().reduce((a,b)=>a+b,0);
+  const pad=50, cs=(Math.min(W,H)-pad-20)/2;
+  const offX=(W-2*cs-pad)/2+pad, offY=20;
+
+  mat.forEach((row,i)=>{
+    row.forEach((v,j)=>{
+      const isDiag=i===j;
+      const intensity=v/total;
+      ctx.fillStyle=isDiag?`rgba(52,211,153,${intensity*3})` :`rgba(244,114,182,${intensity*5})`;
+      ctx.fillRect(offX+j*cs,offY+i*cs,cs-2,cs-2);
+      ctx.fillStyle='#f8fafc'; ctx.font='bold 14px JetBrains Mono';
+      ctx.fillText(v,(offX+j*cs+cs/2-15).toFixed(0),(offY+i*cs+cs/2+5).toFixed(0));
+      ctx.fillStyle='#94a3b8'; ctx.font='9px JetBrains Mono';
+      ctx.fillText(`${(v/total*100).toFixed(1)}%`,(offX+j*cs+cs/2-12).toFixed(0),(offY+i*cs+cs/2+18).toFixed(0));
+    });
+  });
+
+  // Labels
+  ctx.fillStyle='#94a3b8'; ctx.font='11px JetBrains Mono';
+  labels.forEach((l,i)=>{
+    ctx.fillText(l,offX+i*cs+5,H-5);
+    ctx.save(); ctx.translate(12,offY+i*cs+cs/2+5); ctx.rotate(-Math.PI/2);
+    ctx.fillText(l,0,0); ctx.restore();
+  });
+  ctx.fillStyle='#64748b'; ctx.fillText('Predicted →',offX+10,H-2);
+  ctx.save(); ctx.translate(4,H/2); ctx.rotate(-Math.PI/2); ctx.fillText('← Actual',0,0); ctx.restore();
+}
+
+function drawDiceIoU(){
+  const cv=document.getElementById('diceIouCanvas');
+  cv.width=cv.offsetWidth||400; cv.height=240;
+  const ctx=cv.getContext('2d');
+  const W=cv.width, H=240, pad=40;
+  ctx.fillStyle='#0a0e1a'; ctx.fillRect(0,0,W,H);
+
+  ctx.strokeStyle='#1e293b'; ctx.lineWidth=1;
+  [0,.25,.5,.75,1].forEach(t=>{ ctx.beginPath(); ctx.moveTo(pad,pad+t*(H-2*pad)); ctx.lineTo(W-pad,pad+t*(H-2*pad)); ctx.stroke(); ctx.fillStyle='#64748b'; ctx.font='9px JetBrains Mono'; ctx.fillText((1-t).toFixed(2),2,pad+t*(H-2*pad)+3); });
+  [0,.25,.5,.75,1].forEach(t=>{ ctx.beginPath(); ctx.moveTo(pad+t*(W-2*pad),pad); ctx.lineTo(pad+t*(W-2*pad),H-pad); ctx.stroke(); ctx.fillStyle='#64748b'; ctx.font='9px JetBrains Mono'; ctx.fillText(t.toFixed(1),pad+t*(W-2*pad)-6,H-5); });
+
+  ctx.beginPath(); ctx.strokeStyle='#34d399'; ctx.lineWidth=2.5;
+  for(let iou=0;iou<=1;iou+=0.01){
+    const dice=2*iou/(1+iou);
+    const x=pad+iou*(W-2*pad), y=H-pad-dice*(H-2*pad);
+    iou===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+
+  // y=x reference
+  ctx.setLineDash([4,4]); ctx.strokeStyle='#64748b'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(pad,H-pad); ctx.lineTo(W-pad,pad); ctx.stroke(); ctx.setLineDash([]);
+
+  ctx.fillStyle='#34d399'; ctx.font='11px JetBrains Mono'; ctx.fillText('Dice',W-60,50);
+  ctx.fillStyle='#64748b'; ctx.fillText('y=x',W-60,80);
+  ctx.fillStyle='#64748b'; ctx.font='10px JetBrains Mono'; ctx.fillText('IoU →',W/2-20,H-2);
+  ctx.save(); ctx.translate(12,H/2); ctx.rotate(-Math.PI/2); ctx.fillText('Dice ↑',0,0); ctx.restore();
+}
+
+update(); drawConfusion(); drawDiceIoU();
+window.addEventListener('resize',()=>{update();drawConfusion();drawDiceIoU();});
+</script>
+</body></html>

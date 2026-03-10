@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spatial Statistics — Biomedical Imaging</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@400;700;800&display=swap');
+  :root { --bg:#0a0e1a;--surface:#111827;--border:#1e293b;--accent:#34d399;--accent2:#f59e0b;--accent3:#38bdf8;--text:#e2e8f0;--muted:#64748b; }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;min-height:100vh;padding:2rem;}
+  h1{font-size:2rem;font-weight:800;color:var(--accent);margin-bottom:.25rem;}
+  .subtitle{color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:.8rem;margin-bottom:2rem;}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;max-width:1100px;}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1.5rem;}
+  .card h3{font-size:1rem;font-weight:700;color:var(--accent2);margin-bottom:1rem;}
+  canvas{display:block;width:100%!important;}
+  button{background:var(--border);border:1px solid var(--accent);color:var(--accent);padding:.4rem .9rem;border-radius:6px;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:.75rem;transition:all .2s;margin:.2rem;}
+  button:hover,button.active{background:var(--accent);color:var(--bg);}
+  .controls{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1rem;}
+  .full{grid-column:1/-1;}
+  .info-box{background:#0d1425;border:1px solid var(--border);border-radius:8px;padding:1rem;margin-top:1rem;font-family:'JetBrains Mono',monospace;font-size:.78rem;line-height:1.7;color:var(--muted);}
+  .info-box span{color:var(--accent);}
+  label{font-family:'JetBrains Mono',monospace;font-size:.75rem;color:var(--muted);}
+  input[type=range]{accent-color:var(--accent);width:100%;margin-top:.25rem;}
+</style>
+</head>
+<body>
+<h1>🗺️ Spatial Statistics</h1>
+<p class="subtitle">// spatial correlation · covariance · Markov Random Fields · variograms</p>
+
+<div class="grid">
+  <div class="card">
+    <h3>Simulated Tissue Patch (MRF)</h3>
+    <div class="controls">
+      <button class="active" onclick="setMode('random')">Random</button>
+      <button onclick="setMode('smooth')">Smooth (β=2)</button>
+      <button onclick="setMode('clustered')">Clustered (β=4)</button>
+    </div>
+    <canvas id="tissueCanvas" height="240"></canvas>
+    <label>β (MRF coupling strength): <span id="betaVal">1.0</span></label>
+    <input type="range" id="betaSlider" min="0" max="5" step="0.1" value="1" oninput="onBeta()">
+  </div>
+
+  <div class="card">
+    <h3>Spatial Autocorrelation (Semivariogram)</h3>
+    <canvas id="variogramCanvas" height="260"></canvas>
+    <div class="info-box">
+      <span>Nugget:</span> variance at lag=0 (noise)<br>
+      <span>Sill:</span> variance plateau (total variance)<br>
+      <span>Range:</span> lag where correlation disappears
+    </div>
+  </div>
+
+  <div class="card full">
+    <h3>Moran's I — Spatial Autocorrelation Index</h3>
+    <canvas id="moranCanvas" height="160"></canvas>
+    <div class="info-box" style="margin-top:.75rem;">
+      <span>Moran's I ≈ +1</span> → strong positive spatial autocorrelation (clusters) &nbsp;|&nbsp;
+      <span>I ≈ 0</span> → random &nbsp;|&nbsp;
+      <span>I ≈ -1</span> → checkerboard (dispersed)
+    </div>
+  </div>
+</div>
+
+<script>
+function randn(){let u=0,v=0;while(u===0)u=Math.random();while(v===0)v=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+
+let tissueData=[];
+const N=48;
+
+function generateTissue(beta){
+  // Simple Gibbs-like MRF simulation
+  let grid=Array.from({length:N},()=>Array.from({length:N},()=>Math.random()>0.5?1:0));
+  for(let iter=0;iter<beta*80;iter++){
+    const i=Math.floor(Math.random()*N), j=Math.floor(Math.random()*N);
+    let neighbors=0, count=0;
+    [[-1,0],[1,0],[0,-1],[0,1]].forEach(([di,dj])=>{
+      const ni=i+di, nj=j+dj;
+      if(ni>=0&&ni<N&&nj>=0&&nj<N){neighbors+=grid[ni][nj];count++;}
+    });
+    const meanN=count>0?neighbors/count:0.5;
+    grid[i][j]=Math.random()<(0.3+0.4*meanN*beta/2.5)?1:0;
+  }
+  return grid;
+}
+
+function drawTissue(grid){
+  const cv=document.getElementById('tissueCanvas');
+  cv.width=cv.offsetWidth||400; cv.height=240;
+  const ctx=cv.getContext('2d');
+  const W=cv.width, H=240, cs=Math.min(W/N,H/N);
+  ctx.fillStyle='#0a0e1a'; ctx.fillRect(0,0,W,H);
+  for(let i=0;i<N;i++) for(let j=0;j<N;j++){
+    const v=grid[i][j];
+    ctx.fillStyle=v?'#34d399':'#1e293b';
+    ctx.fillRect(j*cs,i*cs,cs-0.5,cs-0.5);
+  }
+}
+
+function computeVariogram(grid){
+  const lags=[1,2,3,4,5,6,8,10,12];
+  return lags.map(lag=>{
+    let sum=0, count=0;
+    for(let i=0;i<N;i++) for(let j=0;j<N-lag;j++){
+      sum+=(grid[i][j]-grid[i][j+lag])**2; count++;
+    }
+    for(let i=0;i<N-lag;i++) for(let j=0;j<N;j++){
+      sum+=(grid[i][j]-grid[i+lag][j])**2; count++;
+    }
+    return {lag,gamma:count>0?sum/(2*count):0};
+  });
+}
+
+function drawVariogram(vario){
+  const cv=document.getElementById('variogramCanvas');
+  cv.width=cv.offsetWidth||400; cv.height=260;
+  const ctx=cv.getContext('2d');
+  const W=cv.width, H=260, pad=40;
+  ctx.fillStyle='#0a0e1a'; ctx.fillRect(0,0,W,H);
+  const maxG=Math.max(...vario.map(v=>v.gamma))||1;
+  const maxLag=vario[vario.length-1].lag;
+  const sx=v=>(v.lag/maxLag)*(W-2*pad)+pad;
+  const sy=v=>H-pad-(v.gamma/maxG)*(H-2*pad);
+  // grid lines
+  ctx.strokeStyle='#1e293b'; ctx.lineWidth=1;
+  [0,.25,.5,.75,1].forEach(t=>{ ctx.beginPath(); ctx.moveTo(pad,pad+t*(H-2*pad)); ctx.lineTo(W-pad,pad+t*(H-2*pad)); ctx.stroke(); });
+  // sill line
+  ctx.strokeStyle='#f59e0b44'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
+  ctx.beginPath(); ctx.moveTo(pad,sy({gamma:maxG})); ctx.lineTo(W-pad,sy({gamma:maxG})); ctx.stroke();
+  ctx.setLineDash([]);
+  // curve
+  ctx.beginPath(); ctx.strokeStyle='#34d399'; ctx.lineWidth=2.5;
+  vario.forEach((v,i)=>i===0?ctx.moveTo(sx(v),sy(v)):ctx.lineTo(sx(v),sy(v)));
+  ctx.stroke();
+  // dots
+  vario.forEach(v=>{ ctx.beginPath(); ctx.arc(sx(v),sy(v),4,0,Math.PI*2); ctx.fillStyle='#34d399'; ctx.fill(); });
+  // labels
+  ctx.fillStyle='#64748b'; ctx.font='10px JetBrains Mono';
+  ctx.fillText('γ(h)',5,pad+5); ctx.fillText('Lag h',W/2-20,H-5);
+  ctx.fillStyle='#f59e0b'; ctx.fillText('sill',W-80,sy({gamma:maxG})-5);
+}
+
+function computeMoran(grid){
+  const flat=grid.flat(); const n=flat.length;
+  const mean=flat.reduce((a,b)=>a+b,0)/n;
+  let num=0, den=0, W=0;
+  for(let i=0;i<N;i++) for(let j=0;j<N;j++){
+    const v=grid[i][j]-mean; den+=v*v;
+    [[-1,0],[1,0],[0,-1],[0,1]].forEach(([di,dj])=>{
+      const ni=i+di, nj=j+dj;
+      if(ni>=0&&ni<N&&nj>=0&&nj<N){ num+=v*(grid[ni][nj]-mean); W++; }
+    });
+  }
+  return W>0?(n*num)/(W*den):0;
+}
+
+function drawMoran(I){
+  const cv=document.getElementById('moranCanvas');
+  cv.width=cv.offsetWidth||800; cv.height=160;
+  const ctx=cv.getContext('2d');
+  const W=cv.width, H=160, pad=40;
+  ctx.fillStyle='#0a0e1a'; ctx.fillRect(0,0,W,H);
+  // scale: -1 to +1
+  const sx=v=>(v+1)/2*(W-2*pad)+pad;
+  // gradient bar
+  const gr=ctx.createLinearGradient(pad,0,W-pad,0);
+  gr.addColorStop(0,'#ef4444'); gr.addColorStop(0.5,'#1e293b'); gr.addColorStop(1,'#34d399');
+  ctx.fillStyle=gr; ctx.fillRect(pad,60,W-2*pad,24);
+  ctx.strokeStyle='#0a0e1a'; ctx.lineWidth=1;
+  [-1,-0.5,0,0.5,1].forEach(v=>{ ctx.fillStyle='#64748b'; ctx.font='10px JetBrains Mono'; ctx.fillText(v.toString(),sx(v)-8,H-15); });
+  ctx.fillStyle='#475569'; ctx.font='9px JetBrains Mono';
+  ctx.fillText('dispersed',pad,55); ctx.fillText('random',W/2-20,55); ctx.fillText('clustered',W-80,55);
+  // pointer
+  const px=sx(Math.max(-1,Math.min(1,I)));
+  ctx.fillStyle='#f8fafc'; ctx.beginPath(); ctx.moveTo(px,58); ctx.lineTo(px-7,40); ctx.lineTo(px+7,40); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#f59e0b'; ctx.font='bold 13px JetBrains Mono';
+  ctx.fillText(`Moran's I = ${I.toFixed(3)}`,px-50,30);
+}
+
+let currentBeta=1;
+function setMode(m){
+  document.querySelectorAll('button').forEach(b=>b.classList.remove('active'));
+  event.target.classList.add('active');
+  const beta={random:0,smooth:2,clustered:4}[m]||1;
+  document.getElementById('betaSlider').value=beta;
+  document.getElementById('betaVal').textContent=beta.toFixed(1);
+  currentBeta=beta; render();
+}
+function onBeta(){
+  const b=parseFloat(document.getElementById('betaSlider').value);
+  document.getElementById('betaVal').textContent=b.toFixed(1);
+  currentBeta=b; render();
+}
+function render(){
+  const grid=generateTissue(currentBeta);
+  drawTissue(grid);
+  drawVariogram(computeVariogram(grid));
+  drawMoran(computeMoran(grid));
+}
+render();
+window.addEventListener('resize',render);
+</script>
+</body></html>

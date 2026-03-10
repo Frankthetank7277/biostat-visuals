@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multivariate Analysis — Biomedical Imaging</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@400;700;800&display=swap');
+  :root{--bg:#0a0e1a;--surface:#111827;--border:#1e293b;--accent:#818cf8;--accent2:#f59e0b;--accent3:#34d399;--text:#e2e8f0;--muted:#64748b;}
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;min-height:100vh;padding:2rem;}
+  h1{font-size:2rem;font-weight:800;color:var(--accent);margin-bottom:.25rem;}
+  .subtitle{color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:.8rem;margin-bottom:2rem;}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;max-width:1100px;}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1.5rem;}
+  .card h3{font-size:1rem;font-weight:700;color:var(--accent2);margin-bottom:1rem;}
+  canvas{display:block;width:100%!important;}
+  .full{grid-column:1/-1;}
+  button{background:var(--border);border:1px solid var(--accent);color:var(--accent);padding:.4rem .9rem;border-radius:6px;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:.75rem;transition:all .2s;margin:.2rem;}
+  button:hover,button.active{background:var(--accent);color:var(--bg);}
+  .controls{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.75rem;}
+  .legend{display:flex;gap:1rem;flex-wrap:wrap;margin-top:.75rem;font-family:'JetBrains Mono',monospace;font-size:.75rem;}
+  .leg-item{display:flex;align-items:center;gap:.4rem;}
+  .leg-dot{width:10px;height:10px;border-radius:50%;}
+  .info-box{background:#0d1425;border:1px solid var(--border);border-radius:8px;padding:.75rem;margin-top:.75rem;font-family:'JetBrains Mono',monospace;font-size:.78rem;line-height:1.7;color:var(--muted);}
+  .info-box span{color:var(--accent);}
+</style>
+</head>
+<body>
+<h1>🔭 Multivariate Analysis</h1>
+<p class="subtitle">// PCA · t-SNE · UMAP · dimensionality reduction · cell feature spaces</p>
+
+<div class="grid">
+  <div class="card">
+    <h3>PCA — Cell Feature Space</h3>
+    <div class="controls">
+      <button class="active" onclick="setView('pca')">PCA</button>
+      <button onclick="setView('tsne')">t-SNE</button>
+      <button onclick="setView('umap')">UMAP</button>
+    </div>
+    <canvas id="scatterCanvas" height="280"></canvas>
+    <div class="legend" id="scatterLegend"></div>
+  </div>
+
+  <div class="card">
+    <h3>PCA Scree Plot — Explained Variance</h3>
+    <canvas id="screeCanvas" height="280"></canvas>
+    <div class="info-box">
+      <span>PC1+PC2</span> capture most variance in cell morphology features.<br>
+      In practice, 10–50 PCs are kept before t-SNE/UMAP.
+    </div>
+  </div>
+
+  <div class="card full">
+    <h3>Feature Correlation Heatmap</h3>
+    <canvas id="heatCanvas" height="220"></canvas>
+  </div>
+</div>
+
+<script>
+function randn(){let u=0,v=0;while(u===0)u=Math.random();while(v===0)v=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+
+const CLASSES=['Epithelial','Immune (CD4+)','Stroma','Goblet'];
+const COLORS=['#818cf8','#34d399','#f59e0b','#f472b6'];
+const N_PER=80;
+
+// Generate synthetic 2D projections for each method
+function genPCA(){
+  return CLASSES.map((c,ci)=>{
+    const cx=[[-2,-1],[1,2],[2,-2],[-1,2]][ci];
+    return Array.from({length:N_PER},()=>({x:cx[0]+randn()*0.8,y:cx[1]+randn()*0.9,cls:ci}));
+  }).flat();
+}
+function genTSNE(){
+  return CLASSES.map((c,ci)=>{
+    const cx=[[-3,-3],[3,-3],[3,3],[-3,3]][ci];
+    return Array.from({length:N_PER},()=>({x:cx[0]+randn()*0.6,y:cx[1]+randn()*0.6,cls:ci}));
+  }).flat();
+}
+function genUMAP(){
+  return CLASSES.map((c,ci)=>{
+    const cx=[[-2.5,-1.5],[2,-2],[1.5,2],[-2,2.5]][ci];
+    return Array.from({length:N_PER},()=>({x:cx[0]+randn()*0.5,y:cx[1]+randn()*0.5,cls:ci}));
+  }).flat();
+}
+
+const VIEWS={pca:genPCA(),tsne:genTSNE(),umap:genUMAP()};
+let currentView='pca';
+
+function drawScatter(pts){
+  const cv=document.getElementById('scatterCanvas');
+  cv.width=cv.offsetWidth||400; cv.height=280;
+  const ctx=cv.getContext('2d');
+  const W=cv.width, H=280;
+  ctx.fillStyle='#0a0e1a'; ctx.fillRect(0,0,W,H);
+  const xs=pts.map(p=>p.x), ys=pts.map(p=>p.y);
+  const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
+  const pad=30;
+  const sx=v=>(v-minX)/(maxX-minX)*(W-2*pad)+pad;
+  const sy=v=>(v-minY)/(maxY-minY)*(H-2*pad)+pad;
+  pts.forEach(p=>{
+    ctx.beginPath(); ctx.arc(sx(p.x),sy(p.y),3.5,0,Math.PI*2);
+    ctx.fillStyle=COLORS[p.cls]+'bb'; ctx.fill();
+  });
+  const leg=document.getElementById('scatterLegend');
+  leg.innerHTML=CLASSES.map((c,i)=>`<div class="leg-item"><div class="leg-dot" style="background:${COLORS[i]}"></div>${c}</div>`).join('');
+}
+
+function setView(v){
+  currentView=v;
+  document.querySelectorAll('.controls button').forEach(b=>b.classList.remove('active'));
+  event.target.classList.add('active');
+  drawScatter(VIEWS[v]);
+  const h3=document.querySelector('.card h3');
+  if(h3) h3.textContent={pca:'PCA — Cell Feature Space',tsne:'t-SNE — Cell Feature Space',umap:'UMAP — Cell Feature Space'}[v];
+}
+
+function drawScree(){
+  const cv=document.getElementById('screeCanvas');
+  cv.width=cv.offsetWidth||400; cv.height=280;
+  const ctx=cv.getContext('2d');
+  const W=cv.width, H=280, pad=40;
+  const varExplained=[0.42,0.23,0.12,0.08,0.05,0.04,0.03,0.02,0.01,0.005];
+  const cumVar=varExplained.reduce((acc,v,i)=>[...acc,(acc[i-1]||0)+v],[]);
+  const maxY=0.5;
+
+  ctx.fillStyle='#0a0e1a'; ctx.fillRect(0,0,W,H);
+  // bars
+  const bw=(W-2*pad)/varExplained.length;
+  varExplained.forEach((v,i)=>{
+    const barH=(v/maxY)*(H-2*pad);
+    ctx.fillStyle='#818cf866';
+    ctx.fillRect(pad+i*bw+2,H-pad-barH,bw-4,barH);
+    ctx.fillStyle='#818cf8'; ctx.font='9px JetBrains Mono';
+    ctx.fillText(`PC${i+1}`,pad+i*bw+4,H-pad+12);
+  });
+  // cumulative line
+  ctx.beginPath(); ctx.strokeStyle='#f59e0b'; ctx.lineWidth=2;
+  cumVar.forEach((v,i)=>{
+    const x=pad+(i+0.5)*bw, y=H-pad-(v/1)*(H-2*pad);
+    i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+  cumVar.forEach((v,i)=>{
+    ctx.beginPath(); ctx.arc(pad+(i+0.5)*bw,H-pad-(v)*(H-2*pad),4,0,Math.PI*2);
+    ctx.fillStyle='#f59e0b'; ctx.fill();
+  });
+  ctx.fillStyle='#f59e0b'; ctx.font='10px JetBrains Mono'; ctx.fillText('Cumulative',W-80,25);
+  ctx.fillStyle='#818cf8'; ctx.fillText('Per-PC',W-60,40);
+  ctx.fillStyle='#64748b'; ctx.fillText('% Var',4,pad);
+}
+
+function drawHeatmap(){
+  const cv=document.getElementById('heatCanvas');
+  cv.width=cv.offsetWidth||800; cv.height=220;
+  const ctx=cv.getContext('2d');
+  const W=cv.width, H=220;
+  const features=['Area','Perimeter','Circularity','Mean Int.','Texture','Eccentricity'];
+  const n=features.length;
+  // synthetic correlation matrix
+  const corr=[
+    [1,0.85,0.62,-0.1,0.3,0.4],
+    [0.85,1,0.45,-0.05,0.25,0.55],
+    [0.62,0.45,1,0.1,0.15,0.2],
+    [-0.1,-0.05,0.1,1,0.7,-0.3],
+    [0.3,0.25,0.15,0.7,1,-0.2],
+    [0.4,0.55,0.2,-0.3,-0.2,1]
+  ];
+  ctx.fillStyle='#0a0e1a'; ctx.fillRect(0,0,W,H);
+  const labelW=85, cs=Math.min((W-labelW-10)/n,(H-20)/n);
+  const offX=labelW, offY=15;
+  corr.forEach((row,i)=>{
+    row.forEach((v,j)=>{
+      const r=v>0?Math.floor(v*30):0, g=v>0?Math.floor(v*180):0, b=v<0?Math.floor(-v*200):Math.floor(v*100);
+      ctx.fillStyle=`rgb(${r},${g},${50+b})`;
+      ctx.fillRect(offX+j*cs,offY+i*cs,cs-1,cs-1);
+      if(cs>20){ctx.fillStyle='#fff'; ctx.font='9px JetBrains Mono'; ctx.fillText(v.toFixed(1),offX+j*cs+3,offY+i*cs+cs/2+3);}
+    });
+    ctx.fillStyle='#94a3b8'; ctx.font='10px JetBrains Mono';
+    ctx.fillText(features[i],2,offY+i*cs+cs/2+3);
+  });
+  features.forEach((f,j)=>{
+    ctx.save(); ctx.translate(offX+j*cs+cs/2,offY-3); ctx.rotate(-0.4);
+    ctx.fillStyle='#94a3b8'; ctx.font='9px JetBrains Mono'; ctx.fillText(f,0,0);
+    ctx.restore();
+  });
+}
+
+drawScatter(VIEWS['pca']); drawScree(); drawHeatmap();
+window.addEventListener('resize',()=>{drawScatter(VIEWS[currentView]);drawScree();drawHeatmap();});
+</script>
+</body></html>

@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bayesian Statistics — Biomedical Imaging</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@400;700;800&display=swap');
+  :root{--bg:#0a0e1a;--surface:#111827;--border:#1e293b;--accent:#e879f9;--accent2:#34d399;--accent3:#f59e0b;--text:#e2e8f0;--muted:#64748b;}
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;min-height:100vh;padding:2rem;}
+  h1{font-size:2rem;font-weight:800;color:var(--accent);margin-bottom:.25rem;}
+  .subtitle{color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:.8rem;margin-bottom:2rem;}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;max-width:1100px;}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1.5rem;}
+  .card h3{font-size:1rem;font-weight:700;color:var(--accent2);margin-bottom:1rem;}
+  canvas{display:block;width:100%!important;}
+  .full{grid-column:1/-1;}
+  label{font-family:'JetBrains Mono',monospace;font-size:.75rem;color:var(--muted);display:block;margin-bottom:.25rem;}
+  input[type=range]{accent-color:var(--accent);width:100%;margin-bottom:.75rem;}
+  .eq{font-family:'JetBrains Mono',monospace;font-size:.85rem;color:var(--accent3);background:#12102a;border:1px solid var(--accent3)33;border-radius:6px;padding:.5rem .75rem;margin:.5rem 0;text-align:center;}
+  .info-box{background:#0d1425;border:1px solid var(--border);border-radius:8px;padding:.75rem;margin-top:.75rem;font-family:'JetBrains Mono',monospace;font-size:.78rem;line-height:1.7;color:var(--muted);}
+  .info-box span{color:var(--accent);}
+  .legend{display:flex;gap:1.5rem;font-family:'JetBrains Mono',monospace;font-size:.75rem;margin-top:.5rem;flex-wrap:wrap;}
+</style>
+</head>
+<body>
+<h1>🎲 Bayesian Statistics</h1>
+<p class="subtitle">// prior · likelihood · posterior · MAP estimation · probabilistic segmentation</p>
+
+<div class="grid">
+  <div class="card full">
+    <h3>Bayes' Theorem — Prior × Likelihood → Posterior</h3>
+    <div class="eq">P(θ | data) ∝ P(data | θ) · P(θ)</div>
+    <label>Prior mean: <span id="priorMuV">100</span> &nbsp;&nbsp; Prior std: <span id="priorSigV">30</span></label>
+    <input type="range" id="priorMu" min="60" max="180" value="100" oninput="drawBayes()">
+    <label>Likelihood center: <span id="likeMuV">150</span></label>
+    <input type="range" id="likeMu" min="60" max="200" value="150" oninput="drawBayes()">
+    <label>n observations (likelihood sharpness): <span id="nObsV">10</span></label>
+    <input type="range" id="nObs" min="1" max="60" value="10" oninput="drawBayes()">
+    <canvas id="bayesCanvas" height="200"></canvas>
+    <div class="legend">
+      <span style="color:#64748b">■ Prior P(θ)</span>
+      <span style="color:#34d399">■ Likelihood P(data|θ)</span>
+      <span style="color:#e879f9">■ Posterior P(θ|data)</span>
+      <span style="color:#f59e0b">▲ MAP estimate</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Probabilistic Segmentation Map</h3>
+    <canvas id="segCanvas" height="260"></canvas>
+    <div class="info-box"><span>p(cell)</span> per pixel — warmer colors = higher posterior probability of cell label</div>
+  </div>
+
+  <div class="card">
+    <h3>Beta-Binomial Conjugate Update</h3>
+    <label>Prior: Beta(α=<span id="aV">2</span>, β=<span id="bV">2</span>)</label>
+    <input type="range" id="alphaS" min="1" max="15" value="2" oninput="drawBeta()">
+    <label>Observed: <span id="kV">7</span> positives out of <span id="nV">10</span></label>
+    <input type="range" id="kSlider" min="0" max="20" value="7" oninput="drawBeta()">
+    <canvas id="betaCanvas" height="180"></canvas>
+    <div class="info-box"><span>Posterior:</span> Beta(α+k, β+n-k) — analytical update!</div>
+  </div>
+</div>
+
+<script>
+function normalPDF(x,mu,sigma){return Math.exp(-0.5*((x-mu)/sigma)**2)/(sigma*Math.sqrt(2*Math.PI));}
+
+function drawBayes(){
+  const priorMu=+document.getElementById('priorMu').value;
+  const priorSig=30;
+  const likeMu=+document.getElementById('likeMu').value;
+  const nObs=+document.getElementById('nObs').value;
+  const likeSig=40/Math.sqrt(nObs);
+
+  document.getElementById('priorMuV').textContent=priorMu;
+  document.getElementById('priorSigV').textContent=priorSig;
+  document.getElementById('likeMuV').textContent=likeMu;
+  document.getElementById('nObsV').textContent=nObs;
+
+  // Posterior: Gaussian conjugate
+  const postPrec=1/(priorSig**2)+nObs/(40**2);
+  const postMu=(priorMu/(priorSig**2)+nObs*likeMu/(40**2))/postPrec;
+  const postSig=Math.sqrt(1/postPrec);
+
+  const cv=document.getElementById('bayesCanvas');
+  cv.width=cv.offsetWidth||800; cv.height=200;
+  const ctx=cv.getContext('2d');
+  const W=cv.width, H=200, pad=30;
+  ctx.fillStyle='#0a0e1a'; ctx.fillRect(0,0,W,H);
+
+  const lo=0, hi=260;
+  const sx=v=>(v-lo)/(hi-lo)*(W-2*pad)+pad;
+  const fns=[
+    {fn:x=>normalPDF(x,priorMu,priorSig),col:'#475569'},
+    {fn:x=>normalPDF(x,likeMu,likeSig),col:'#34d399'},
+    {fn:x=>normalPDF(x,postMu,postSig),col:'#e879f9'}
+  ];
+
+  const peaks=fns.map(({fn})=>{let max=0;for(let x=lo;x<=hi;x++) max=Math.max(max,fn(x));return max;});
+  const globalMax=Math.max(...peaks)||1;
+
+  fns.forEach(({fn,col},fi)=>{
+    ctx.beginPath(); ctx.strokeStyle=col; ctx.lineWidth=2.5;
+    for(let x=lo;x<=hi;x+=0.5){
+      const y=H-pad-(fn(x)/globalMax)*(H-2*pad);
+      x===lo?ctx.moveTo(sx(x),y):ctx.lineTo(sx(x),y);
+    }
+    ctx.stroke();
+  });
+
+  // MAP marker
+  const mapX=sx(postMu);
+  ctx.fillStyle='#f59e0b';
+  ctx.beginPath(); ctx.moveTo(mapX,H-pad-15); ctx.lineTo(mapX-7,H-pad); ctx.lineTo(mapX+7,H-pad); ctx.closePath(); ctx.fill();
+  ctx.font='10px JetBrains Mono'; ctx.fillText(`MAP=${postMu.toFixed(1)}`,mapX+8,H-pad-5);
+
+  ctx.fillStyle='#64748b'; ctx.font='10px JetBrains Mono';
+  [0,64,128,192,255].forEach(v=>ctx.fillText(v,sx(v)-6,H-5));
+}
+
+function drawSeg(){
+  const cv=document.getElementById('segCanvas');
+  cv.width=cv.offsetWidth||400; cv.height=260;
+  const ctx=cv.getContext('2d');
+  const W=cv.width, H=260;
+  const N=60;
+  const cs=Math.min(W/N,H/N);
+
+  ctx.fillStyle='#0a0e1a'; ctx.fillRect(0,0,W,H);
+  // Generate cell-like blobs
+  const centers=[[15,15],[35,20],[20,40],[45,40],[10,50]];
+  for(let i=0;i<N;i++) for(let j=0;j<N;j++){
+    let prob=0.05;
+    centers.forEach(([cx,cy])=>{
+      const d=Math.sqrt((i-cy)**2+(j-cx)**2);
+      prob=Math.max(prob,Math.exp(-d*d/20));
+    });
+    prob=Math.min(1,prob+Math.random()*0.05);
+    // heat color: low=dark blue, mid=teal, high=yellow
+    const r=prob>0.5?Math.floor((prob-0.5)*2*255):0;
+    const g=prob>0.3?Math.floor(Math.min(1,(prob-0.3)/0.4)*200):0;
+    const b=prob<0.5?Math.floor((1-prob*2)*150):0;
+    ctx.fillStyle=`rgb(${r},${g},${b})`;
+    ctx.fillRect(j*cs,i*cs,cs,cs);
+  }
+
+  // colorbar
+  const cbX=W-16, cbH=H-20;
+  const gr=ctx.createLinearGradient(0,cbH,0,10);
+  gr.addColorStop(0,'#00003c'); gr.addColorStop(0.5,'#00c864'); gr.addColorStop(1,'#ffff00');
+  ctx.fillStyle=gr; ctx.fillRect(cbX,10,12,cbH);
+  ctx.fillStyle='#94a3b8'; ctx.font='9px JetBrains Mono';
+  ctx.fillText('1.0',cbX-4,14); ctx.fillText('0.5',cbX-4,H/2); ctx.fillText('0.0',cbX-4,H-8);
+}
+
+function drawBeta(){
+  const a=+document.getElementById('alphaS').value;
+  const k=+document.getElementById('kSlider').value;
+  const n=20;
+  document.getElementById('aV').textContent=a;
+  document.getElementById('bV').textContent=a;
+  document.getElementById('kV').textContent=k;
+  document.getElementById('nV').textContent=n;
+
+  const cv=document.getElementById('betaCanvas');
+  cv.width=cv.offsetWidth||400; cv.height=180;
+  const ctx=cv.getContext('2d');
+  const W=cv.width, H=180, pad=30;
+  ctx.fillStyle='#0a0e1a'; ctx.fillRect(0,0,W,H);
+
+  // beta PDF (unnormalized)
+  function betaPDF(x,a,b){if(x<=0||x>=1)return 0;return Math.pow(x,a-1)*Math.pow(1-x,b-1);}
+  const prior={a,b:a}, post={a:a+k,b:a+n-k};
+  const pts=100;
+  const [pa,pb]=[prior,post].map(({a,b})=>{
+    const ys=Array.from({length:pts+1},(_,i)=>betaPDF(i/pts,a,b));
+    return Math.max(...ys)||1;
+  });
+  const globalPeak=Math.max(pa,pb)||1;
+
+  [{params:prior,col:'#475569'},{params:post,col:'#e879f9'}].forEach(({params,col})=>{
+    ctx.beginPath(); ctx.strokeStyle=col; ctx.lineWidth=2.5;
+    for(let i=0;i<=pts;i++){
+      const x=i/pts, y=H-pad-(betaPDF(x,params.a,params.b)/globalPeak)*(H-2*pad);
+      const px=pad+x*(W-2*pad);
+      i===0?ctx.moveTo(px,y):ctx.lineTo(px,y);
+    }
+    ctx.stroke();
+  });
+
+  ctx.fillStyle='#64748b'; ctx.font='10px JetBrains Mono';
+  ['0','0.25','0.5','0.75','1'].forEach((v,i)=>ctx.fillText(v,pad+i*0.25*(W-2*pad)-5,H-5));
+  ctx.fillStyle='#475569'; ctx.fillText('Prior',pad,20);
+  ctx.fillStyle='#e879f9'; ctx.fillText(`Posterior Beta(${post.a},${post.b})`,pad+60,20);
+}
+
+drawBayes(); drawSeg(); drawBeta();
+window.addEventListener('resize',()=>{drawBayes();drawSeg();drawBeta();});
+</script>
+</body></html>
